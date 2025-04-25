@@ -1,0 +1,270 @@
+package expression.generic;
+
+import expression.exceptions.*;
+import expression.generic.calculation.Calculation;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.Stack;
+import java.util.function.Function;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+public class GenericParser<T extends Number> {
+    private String string;
+    private int index;
+    private final int RECURSION_STEP;
+    private final int RECURSION_MIN;
+    private final int RECURSION_MAX;
+    private Stack<Character> parantness;
+    private Calculation<T> calc;
+
+    private final Map<Character,Character> brackets = Map.of(
+        '{','}',
+        '(',')',
+        '[',']'
+    );
+
+    private final Map<String, Integer> binary = Map.of(
+        "perimeter", 10,
+        "area", 10,
+        "+", 20,
+        "-", 20,
+        "*", 100,
+        "/", 100);
+    private final Map<String, Function<Expression<T>[], Expression<T>>> binToClassMap = Map.of(
+        "perimeter", args -> new Perimeter<T>(args[0], args[1],calc),
+        "area", args -> new Area<T>(args[0], args[1],calc),
+        "+", args -> new Add<T>(args[0], args[1], calc),
+        "-", args -> new Subtract<T>(args[0], args[1], calc),
+        "*", args -> new Multiply(args[0], args[1], calc),
+        "/", args -> new Divide(args[0], args[1], calc)
+    );
+    private final Map<String, Function<Expression<T>[], Expression<T>>> unToClassMap = Map.of(
+        "-", args -> new Negate(args[0])
+    );
+    private final Set<String> unary = Set.of(
+        "-");
+
+    private Expression<T> createOperator(String operator, Expression<T> left, Expression<T> right) throws ParsingException {
+        Function<Expression<T>[], Expression<T>> constructor = binToClassMap.get(operator);
+        if (constructor == null) {
+            throw new ParsingException("Unknown operator: " + operator);
+        }
+        return constructor.apply(new Expression<T>[]{left, right});
+    }
+    private Expression<T> createOperator(String operator, Expression<T> left) throws ParsingException {
+        Function<Expression<T>[], Expression<T>> constructor = unToClassMap.get(operator);
+        if (constructor == null) {
+            throw new ParsingException("Unknown operator: " + operator);
+        }
+        return constructor.apply(new Expression<T>[]{left});
+    }
+
+    private boolean hasNext() {
+        return index < string.length();
+    }
+
+    private void skipWhitespaces() {
+        while (hasNext() && Character.isWhitespace(string.charAt(index))) {
+            index++;
+        }
+    }
+
+    private String getOperator() {
+        int start = index;
+        String bestMatch = "";
+        int bestMatchLength = 0;
+    
+        while (hasNext()) {
+            String sub = string.substring(start, index + 1);
+            if (binary.containsKey(sub) || unary.contains(sub)) {
+                bestMatch = sub;
+                bestMatchLength = index - start + 1;
+            }
+            index++;
+        }
+    
+        index = start + bestMatchLength;
+        return bestMatch;
+    }
+    
+    
+
+    private Expression<T> parseBinary(int recursion) throws ParsingException {
+        Expression<T> left = recursion < RECURSION_MAX ? parseBinary(recursion + RECURSION_STEP) : parseUnary();
+        skipWhitespaces();
+        if (binary.values().contains(recursion)) {
+            while (hasNext()) {
+                skipWhitespaces();
+                String operator = getOperator();
+                if (!binary.containsKey(operator) || binary.get(operator) != recursion) {
+                    index -= operator.length();
+                    break;
+                }
+        
+                if (!hasNext()) {
+                    throw new ParsingException("Expected operand after " + operator + " at index " + index);
+                }
+
+                Expression<T> right = recursion < RECURSION_MAX ? parseBinary(recursion + RECURSION_STEP) : parseUnary();
+                left = createOperator(operator, left, right);
+            }
+        }
+        return left;
+    }
+
+    private boolean isNum() {
+        char symbol = string.charAt(index);
+        return Character.isDigit(symbol) ||
+                (symbol == '-' && (hasNext() && Character.isDigit(string.charAt(index+1))));
+    }
+
+    private Expression<T> parseUnary() throws ParsingException {
+        skipWhitespaces();
+
+        if (hasNext() && isNum()) {
+            return parseFactor();
+        }
+        while (hasNext()) {
+            skipWhitespaces();
+            String operator = getOperator();
+            if (unary.contains(operator)) {
+                return createOperator(operator, parseUnary());
+            }
+            else {
+                if (!operator.isEmpty()) throw new ParsingException("No argument at index: "+ index+","+string.charAt(index));
+                break;
+            }
+        }
+        return parseFactor();
+    }
+
+    private Expression<T> parseFactor() throws ParsingException {
+        skipWhitespaces();
+        if (!hasNext()) {
+            throw new ParsingException("Unexpected end of expression");
+        }
+    
+        Expression<T> result;
+        char symbol = string.charAt(index);
+    
+        if (isNum()) {
+            return parseConst();
+        } else if (Character.isLetter(symbol)) {
+            return parseVariable();
+        } else if (brackets.keySet().contains(symbol)) {
+            parantness.push(symbol);
+            index++;
+            result = parseBinary(RECURSION_MIN);
+            skipWhitespaces();
+
+            if (!hasNext()) {
+                throw new ParsingException("Expected closing bracket at index " + index);
+            }
+    
+            char closeCh = string.charAt(index);
+    
+            if (!brackets.values().contains(closeCh)) {
+                throw new ParsingException("Expected closing bracket at index " + index);
+            }
+    
+            if (parantness.isEmpty() || brackets.get(parantness.peek()) != closeCh) {
+                throw new ParsingException("Mismatched brackets at index: " + index);
+            }
+    
+            parantness.pop();
+            index++;
+        } else if (brackets.values().contains(symbol)) {
+            throw new ParsingException("Unexpected closing parenthesis at index " + index);
+        } else {
+            throw new ParsingException("Unexpected symbol: " + symbol + " at index " + index);
+        }
+    
+        return result;
+    }
+    
+
+    private Const<T> parseConst() throws ParsingException {
+        skipWhitespaces();
+        StringBuilder sb = new StringBuilder();
+        while (hasNext() && (Character.isDigit(string.charAt(index)) || 
+               (string.charAt(index) == '-' && sb.isEmpty()))) {
+            sb.append(string.charAt(index));
+            index++;
+        }
+        if (sb.isEmpty()) {
+            throw new ParsingException("Expected a constant at index " + index);
+        }
+        try {
+            return new Const<>(calc.parseNumber(sb.toString()));
+        } catch (NumberFormatException e) {
+            throw new ParsingException("Invalid number format: " + sb + " at index " + index);
+        }
+    }
+    
+
+    private Variable<T> parseVariable() throws ParsingException {
+        skipWhitespaces();
+        StringBuilder sb = new StringBuilder();
+        while (hasNext() && Character.isLetter(string.charAt(index))) {
+            sb.append(string.charAt(index));
+            index++;
+        }
+        char ch = sb.charAt(sb.length() - 1);
+        if (ch != 'x' && ch != 'y' && ch != 'z') {
+            throw new ParsingException("Invalid character: " + ch);
+        }
+        return new Variable<T>(sb.toString());
+    }
+
+    public GenericParser() {
+        index = 0;
+        string = null;
+
+        int min = Integer.MAX_VALUE;
+        int max = Integer.MIN_VALUE;
+        int step = Integer.MAX_VALUE;
+        for (int priority : binary.values()) {
+            if (priority < min) {
+                min = priority;
+            }
+            if (priority > max) {
+                max = priority;
+            }
+        }
+        List<Integer> sorted = new ArrayList<>(binary.values());
+        Collections.sort(sorted);
+
+        for (int i = 1; i < sorted.size(); i++) {
+            int diff = sorted.get(i) - sorted.get(i - 1);
+            if (diff < step && sorted.get(i) != sorted.get(i - 1)) {
+                step = diff;
+            }
+        }
+        RECURSION_STEP = step != Integer.MAX_VALUE ? step : 0;
+        RECURSION_MAX = max;
+        RECURSION_MIN = min;
+    }
+    
+    public Expression<T> parse(String expression) throws ParsingException {
+        if (expression.isEmpty() || expression == null) {
+            throw new IllegalArgumentException("expression can't be empty");
+        }
+        parantness = new Stack<>();
+        System.out.println(parantness);
+        System.out.println("#"+expression+"#");
+        string = expression;
+        index = 0;
+        Expression<T> oper = parseBinary(RECURSION_MIN);
+        if (!parantness.isEmpty()) {
+            throw new ParsingException("Mismatching parantness");
+        }
+        if (hasNext()) {
+            throw new ParsingException("Unexpected character after expression at index " + index);
+        }
+        System.out.println("@"+oper+"@");
+        return oper;
+    }
+}

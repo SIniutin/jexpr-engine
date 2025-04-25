@@ -1,0 +1,52 @@
+package expression;
+
+public class Variable extends Operator{
+    final String name;
+
+    public Variable(String name) {
+        this.name = name;
+    }
+    @Override
+    public String toString() {
+        return name;
+    }
+
+    // @Override
+    // public String toMiniString() {
+    //     return name;
+    // }
+    @Override
+    public int evaluate(int x) {
+        return x;
+    }
+    @Override
+    public int evaluate(int x, int y, int z) {
+        switch (name.charAt(name.length()-1)) {
+            case 'x' -> {
+                return x;
+            }
+            case 'y' -> {
+                return y;
+            }
+            case 'z' -> {
+                return z;
+            }
+            default -> throw new AssertionError();
+        }
+    }
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj != null && (obj instanceof Variable)) {
+            Variable eq = (Variable) obj;
+            return this.name.equals(eq.name);
+        }
+        return false;
+    }
+    @Override
+    public int hashCode() {
+        return name.hashCode();
+    }
+}
